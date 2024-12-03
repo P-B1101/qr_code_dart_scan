@@ -142,7 +142,7 @@ class QRCodeDartScanController {
     try {
       await cameraController?.initialize();
     } catch (error) {
-      final exception = error is PlatformException && error.code == 'CameraAccessDenied'
+      final exception = error is CameraException && error.code == 'CameraAccessDenied'
           ? const QrCodeDartScanNoPermissionException()
           : const QrCodeDartScanGeneralException();
       state.value = state.value.withException(exception);
