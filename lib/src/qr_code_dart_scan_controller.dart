@@ -2,6 +2,7 @@ import 'package:equatable/equatable.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:qr_code_dart_scan/qr_code_dart_scan.dart';
+import 'package:qr_code_dart_scan/src/error/qr_code_dart_scan_exception.dart';
 import 'package:qr_code_dart_scan/src/util/extensions.dart';
 
 ///
@@ -23,6 +24,7 @@ class PreviewState extends Equatable {
   final TypeScan typeScan;
   final TypeCamera typeCamera;
   final DeviceOrientation? lockCaptureOrientation;
+  final QrCodeDartScanException? exception;
 
   const PreviewState({
     this.result,
@@ -31,6 +33,7 @@ class PreviewState extends Equatable {
     this.typeScan = TypeScan.live,
     this.typeCamera = TypeCamera.back,
     this.lockCaptureOrientation,
+    this.exception,
   });
 
   PreviewState copyWith({
@@ -49,6 +52,17 @@ class PreviewState extends Equatable {
     );
   }
 
+  PreviewState withException(QrCodeDartScanException exception) {
+    return PreviewState(
+      result: result,
+      processing: processing,
+      initialized: initialized,
+      typeScan: typeScan,
+      typeCamera: typeCamera,
+      exception: exception,
+    );
+  }
+
   @override
   List<Object?> get props => [
         result,
@@ -56,6 +70,7 @@ class PreviewState extends Equatable {
         initialized,
         typeScan,
         typeCamera,
+        exception,
       ];
 }
 
@@ -63,8 +78,7 @@ class QRCodeDartScanController {
   final ValueNotifier<PreviewState> state = ValueNotifier(const PreviewState());
   CameraController? cameraController;
   QRCodeDartScanDecoder? _codeDartScanDecoder;
-  QRCodeDartScanResolutionPreset _resolutionPreset =
-      QRCodeDartScanResolutionPreset.medium;
+  QRCodeDartScanResolutionPreset _resolutionPreset = QRCodeDartScanResolutionPreset.medium;
   bool _scanEnabled = false;
   bool get isLiveScan => state.value.typeScan == TypeScan.live && _scanEnabled;
   bool _scanInvertedQRCode = false;
@@ -110,16 +124,30 @@ class QRCodeDartScanController {
       initialized: false,
       typeCamera: typeCamera,
     );
-    final camera = await _getCamera(typeCamera);
+    final CameraDescription camera;
+    try {
+      camera = await _getCamera(typeCamera);
+    } catch (error) {
+      state.value = state.value.withException(
+          error is StateError ? const QrCodeDartScanNotSupportException() : const QrCodeDartScanGeneralException());
+
+      rethrow;
+    }
     cameraController = CameraController(
       camera,
       _resolutionPreset.toResolutionPreset(),
       enableAudio: false,
       imageFormatGroup: ImageFormatGroup.yuv420,
     );
-
-    await cameraController?.initialize();
-
+    try {
+      await cameraController?.initialize();
+    } catch (error) {
+      final exception = error is PlatformException && error.code == 'CameraAccessDenied'
+          ? const QrCodeDartScanNoPermissionException()
+          : const QrCodeDartScanGeneralException();
+      state.value = state.value.withException(exception);
+      rethrow;
+    }
     if (_lockCaptureOrientation != null) {
       cameraController?.lockCaptureOrientation(_lockCaptureOrientation!);
     }
@@ -143,6 +171,7 @@ class QRCodeDartScanController {
     }
 
     final cameras = await availableCameras();
+
     return cameras.firstWhere(
       (camera) => camera.lensDirection == lensDirection,
       orElse: () => cameras.first,
